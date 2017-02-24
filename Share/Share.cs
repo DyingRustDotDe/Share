@@ -13,13 +13,11 @@ using UnityEngine;
 namespace Oxide.Plugins
 {
 
-    [Info("Share", "DyingRust.de", "0.1.0", ResourceId = 0000)]
+    [Info("Share", "DyingRust.de", "0.1.0", ResourceId = 2351)]
     [Description("Share cupboards, codelocks and autoturrets")]
     public class Share : RustPlugin
     {
         #region Fields  
-        [PluginReference]
-        private Plugin PlayerDatabase;
         [PluginReference]
         private Plugin Friends;
         [PluginReference]
