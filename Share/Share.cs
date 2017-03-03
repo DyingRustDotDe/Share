@@ -1,11 +1,8 @@
-﻿#define DEBUG
 using Newtonsoft.Json.Linq;
 using Oxide.Core.Libraries.Covalence;
 using Oxide.Core.Plugins;
 using System;
-using System.ComponentModel;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Text;
 using UnityEngine;
@@ -13,103 +10,43 @@ using UnityEngine;
 namespace Oxide.Plugins
 {
 
-    [Info("Share", "DyingRust.de", "0.1.0", ResourceId = 2351)]
+    [Info("Share", "DyingRust.de", "0.1.0", ResourceId = 0000)]
     [Description("Share cupboards, codelocks and autoturrets")]
     public class Share : RustPlugin
     {
-        #region Fields  
-        [PluginReference]
-        private Plugin Friends;
-        [PluginReference]
-        private Plugin Clans;
-
-        enum WantedEntityType : uint
+        #region Enum
+        private enum WantedEntityType : uint
         {
             AT = 0x0001,
             CL = 0x0002,
             CB = 0x0004,
             ALL = AT + CL + CB
         }
-
-        private PluginConfig pluginConfig;
-
-        private FieldInfo codelockwhitelist;
         #endregion
 
-        #region Hooks
-        void Loaded()
-        {
-            // Use string interpolation to format a float with 3 decimal points instead of calling string.Format()
-            codelockwhitelist = typeof(CodeLock).GetField("whitelistPlayers", (BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.NonPublic));
-
-            // Check if all dependencies are there
-            Friends = plugins.Find("Friends");
-            if (Friends == null)
-                Logging("Friends Plugin not found");
-            else
-                Logging("Friends Plugin found");
-
-            Clans = plugins.Find("Clans");
-            if (Clans == null)
-                Logging("Clans Plugin not found");
-            else
-                Logging("Clans Plugin found");
-
-            // Load the config file
-            LoadFromConfigFile();
-
-            cmd.AddChatCommand("share", this, "cmdShare");
-            cmd.AddChatCommand("sh", this, "cmdShare");
-
-            // Unsubscribe from Hooks if necessary
-            if (!pluginConfig.General.ChangeOwnerIDOnCodeLockDeployed)
-                Unsubscribe("OnItemDeployed");
-
-            // Register Commands
-            if (string.IsNullOrEmpty(pluginConfig.Commands.ShareCommand))
-                Logging("No valid ShareCommand in config.");
-            else
-                cmd.AddChatCommand(pluginConfig.Commands.ShareCommand, this, "cmdShareShort");
-
-            if (string.IsNullOrEmpty(pluginConfig.Commands.UnshareCommand))
-                Logging("No valid UnshareCommand in config.");
-            else
-            {
-                if (string.Equals(pluginConfig.Commands.ShareCommand, pluginConfig.Commands.UnshareCommand))
-                    Logging("ShareCommand & UnshareCommand are the same.");
-                else
-                    cmd.AddChatCommand(pluginConfig.Commands.UnshareCommand, this, "cmdShareShort");
-            }
-        }
-        // Change OwnerID of entity when codelock is deployed
-        void OnItemDeployed(Deployer deployer, BaseEntity entity)
-        {
-            if (entity & entity.HasSlot(BaseEntity.Slot.Lock) && entity.GetSlot(BaseEntity.Slot.Lock))
-            {
-                CodeLock cl = entity.GetSlot(BaseEntity.Slot.Lock).GetComponent<CodeLock>();
-                if (cl)
-                    entity.OwnerID = deployer.GetOwnerPlayer().userID;
-            }
-        }
+        #region Fields  
+        [PluginReference]
+        private Plugin Friends, Clans;
+        private PluginConfig pluginConfig;
+        // Use string interpolation to format a float with 3 decimal points instead of calling string.Format()
+        private FieldInfo codelockwhitelist = typeof(CodeLock).GetField("whitelistPlayers", (BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.NonPublic));
+        private string[] WhatOptions;
         #endregion
 
         #region Configuration
         // Classes for easier handling of config
-        class PluginConfig
+        private class PluginConfig
         {
             public General General { get; set; }
             public Commands Commands { get; set; }
         }
-        class General
+        private class General
         {
-            public string ChatPrefix { get; set; }
             public bool UsePermission { get; set; }
-            public string PermissionName { get; set; }
             public bool PreventPlayersFromUnsharingThemself { get; set; }
-            public bool PreventPlayersFromSharingUnowned { get; set; }
             public bool ChangeOwnerIDOnCodeLockDeployed { get; set; }
         }
-        class Commands
+        private class Commands
         {
             public string ShareCommand { get; set; }
             public string UnshareCommand { get; set; }
@@ -119,22 +56,24 @@ namespace Oxide.Plugins
             public float Radius { get; set; }
         }
 
-        // Don't ever try to override SaveConfig() & LoadConfig()! Horrible idea!
-        private void SaveToConfigFile() => Config.WriteObject(pluginConfig, true);
-        private void LoadFromConfigFile() => pluginConfig = Config.ReadObject<PluginConfig>();
+        protected override void SaveConfig()
+        {
+            Config.WriteObject(pluginConfig);
+        }
+        protected override void LoadConfig()
+        {
+            base.LoadConfig();
+            pluginConfig = Config.ReadObject<PluginConfig>();
+        }
 
-        // Creates default configuration file
         protected override void LoadDefaultConfig()
         {
-            var defaultConfig = new PluginConfig
+            pluginConfig = new PluginConfig
             {
                 General = new General
                 {
-                    ChatPrefix = "<color=cyan>[Share]</color>",
                     UsePermission = false,
-                    PermissionName = "share",
                     PreventPlayersFromUnsharingThemself = false,
-                    PreventPlayersFromSharingUnowned = false,  // TODO
                     ChangeOwnerIDOnCodeLockDeployed = true
                 },
                 Commands = new Commands
@@ -147,34 +86,164 @@ namespace Oxide.Plugins
                     Radius = 100.0F
                 }
             };
-            Config.WriteObject(defaultConfig, true); // write into config file
+        }
+        #endregion
+
+        #region Localization
+        private const string
+            NoPermission = "NoPermission",
+            NoClan = "NoClan",
+            NoFriends = "NoFriends",
+            Player404 = "Player404",
+            FoundXY = "FoundXY",
+            CreatedWL = "CreatedWL",
+            DeletedWL = "DeletedWL",
+            WrongSyntax = "WrongSyntax",
+            PluginDescription = "PluginDescription",
+            PluginSyntaxShare = "PluginSyntaxShare",
+            PluginSyntaxUnshare = "PluginSyntaxUnshare",
+            PluginExample = "PluginExample";
+        private string WhatList, Notes;
+
+        private void LoadDefaultMessages()
+        {
+            // en
+            lang.RegisterMessages(new Dictionary<string, string>
+            {
+                [NoPermission] = "You don't have the permission to use this command!",
+                [NoClan] = "You don't belong to any clan!",
+                [NoFriends] = "You have no friends added yet!",
+                [Player404] = "Player with name '{0}' not found!",
+                [FoundXY] = "Found {0} {1}!",
+                [CreatedWL] = "Created {0} Whitelist Entries!",
+                [DeletedWL] = "Deleted {0} Whitelist Entries!",
+                [WrongSyntax] = "Invalid command: '{0}'\nSee <color=orange>/share</color> for help!",
+                [PluginDescription] = "Shares items with other players in a {0}m radius around you.",
+                [PluginSyntaxShare] = "<color=#FFD479>/{0}  <friends|clan|name>  {1}</color>",
+                [PluginSyntaxUnshare] = "<color=#FFD479>/{0}  <friends|clan|name>  {1}</color>",
+                [PluginExample] = "Example: <color=#FFD479>/{0} \"Ser Winter\" all</color>"
+
+            }, this);
+        }
+        private void buildStringsForHelpText()
+        {
+            List<string> list = new List<string>(),
+                notes = new List<string>();
+            if (pluginConfig.Commands.AllowAutoturretSharing)
+            {
+                list.Add("at");
+                notes.Add("at=Autoturret");
+            }
+            if (pluginConfig.Commands.AllowCodelockSharing)
+            {
+                list.Add("cl");
+                notes.Add("cl=Codelock");
+            }
+            if (pluginConfig.Commands.AllowCupboardSharing)
+            {
+                list.Add("cb");
+                notes.Add("cb=Cupboard");
+            }
+            if(list.Count > 1)
+                list.Add("all");
+
+            WhatOptions = list.ToArray();
+            WhatList = "<" + string.Join("|", list.ToArray()) + ">";
+            Notes = "Notes: " + string.Join(", ", notes.ToArray());
+        }
+        #endregion
+
+        #region Hooks
+        private void Init()
+        {
+            if (!pluginConfig.Commands.AllowAutoturretSharing && !pluginConfig.Commands.AllowCodelockSharing && !pluginConfig.Commands.AllowCupboardSharing)
+                return;
+
+            LoadDefaultMessages();
+            buildStringsForHelpText();
+
+            if (pluginConfig.General.UsePermission)
+                permission.RegisterPermission("share.allowed", this);
+
+            // Unsubscribe from Hooks if necessary
+            if (!pluginConfig.General.ChangeOwnerIDOnCodeLockDeployed)
+                Unsubscribe("OnItemDeployed");
+
+            // Register Commands
+            cmd.AddChatCommand("share", this, "cmdShare");
+            cmd.AddChatCommand("sh", this, "cmdShare");
+
+            if (string.IsNullOrEmpty(pluginConfig.Commands.ShareCommand))
+                Puts("No valid ShareCommand in config.");
+            else
+                cmd.AddChatCommand(pluginConfig.Commands.ShareCommand, this, "cmdShareShort");
+
+            if (string.IsNullOrEmpty(pluginConfig.Commands.UnshareCommand))
+                Puts("No valid UnshareCommand in config.");
+            else
+            {
+                if (string.Equals(pluginConfig.Commands.ShareCommand, pluginConfig.Commands.UnshareCommand))
+                    Puts("ShareCommand & UnshareCommand are the same.");
+                else
+                    cmd.AddChatCommand(pluginConfig.Commands.UnshareCommand, this, "cmdShareShort");
+            }
+
+        }
+
+        private void Loaded()
+        {
+            if (!pluginConfig.Commands.AllowAutoturretSharing && !pluginConfig.Commands.AllowCodelockSharing && !pluginConfig.Commands.AllowCupboardSharing)
+            {
+                Puts("You don't allow any item to be shareable! So this plugin doesn't really have a use!\n Unloading!");
+                rust.RunServerCommand("oxide.unload Share");
+                return;
+            }
+
+            // Check if optinal dependencies are there
+            if (Friends == null)
+                Puts("Friends Plugin not found");
+            else
+                Puts("Friends Plugin found");
+
+            if (Clans == null)
+                Puts("Clans Plugin not found");
+            else
+                Puts("Clans Plugin found");
+        }
+        // Change OwnerID of entity when codelock is deployed
+        private void OnItemDeployed(Deployer deployer, BaseEntity entity)
+        {
+            if (entity & entity.HasSlot(BaseEntity.Slot.Lock) && entity.GetSlot(BaseEntity.Slot.Lock))
+            {
+                CodeLock cl = entity.GetSlot(BaseEntity.Slot.Lock).GetComponent<CodeLock>();
+                if (cl)
+                    entity.OwnerID = deployer.GetOwnerPlayer().userID;
+            }
         }
         #endregion
 
         #region Commands
-        // if someone writes /share in the chat give him the help text
         void cmdShare(BasePlayer player, string command, string[] args)
         {
             ShowCommandHelp(player);
             return;
         }
 
-        void cmdShareShort(BasePlayer player, string command, string[] args)
+        private void cmdShareShort(BasePlayer player, string command, string[] args)
         {
-            // Check for right commands+arguments+permission
-            //if(player.net.connection.authLevel < 2)
-            //{
-            //  SendReply(player, "You don´t have the permission to use this command.");
-            //  return;
-            //}
-
-            if ((args == null || args.Length != 2) && (Array.IndexOf(new[] { "at", "cl", "cb", "all" }, args[1].ToLower()) > -1))
+            // Check Permission
+            if (pluginConfig.General.UsePermission && !permission.UserHasPermission(player.UserIDString, "share.allowed"))
             {
-                ShowCommandHelp(player);
+                SendReply(player, lang.GetMessage(NoPermission, this, player.UserIDString));
                 return;
             }
 
-            WantedEntityType wantedType = (WantedEntityType)Enum.Parse(typeof(WantedEntityType), args[1].ToUpper());
+            // Check Syntax
+            if (args == null || args.Length != 2 || (Array.IndexOf(WhatOptions, args[1].ToLower()) == -1))
+            {
+                SendReply(player, string.Format(lang.GetMessage(WrongSyntax, this, player.UserIDString), "/" + command + " " + string.Join(" ", args)));
+                return;
+            }
 
             // Decide with who to share
             List<BasePlayer> playerList;
@@ -184,7 +253,7 @@ namespace Oxide.Plugins
                     playerList = FindClanMember(player);
                     if (playerList == null || playerList.Count == 0)
                     {
-                        SendReply(player, "You don't belong to any clan!");
+                        SendReply(player, lang.GetMessage(NoClan, this, player.UserIDString));
                         return;
                     }
                     break;
@@ -192,7 +261,7 @@ namespace Oxide.Plugins
                     playerList = FindFriends(player);
                     if (playerList == null || playerList.Count == 0)
                     {
-                        SendReply(player, "You have no friends added yet!");
+                        SendReply(player, lang.GetMessage(NoFriends, this, player.UserIDString));
                         return;
                     }
                     break;
@@ -206,14 +275,15 @@ namespace Oxide.Plugins
                     }
                     else
                     {
-                        SendReply(player, "Player with name \"" + args[0] + "\" not found!");
+                        SendReply(player, string.Format(lang.GetMessage(Player404, this, player.UserIDString), args[0]));
                         return;
                     }
             }
 
             // Check on what to auth
+            WantedEntityType wantedType = (WantedEntityType)Enum.Parse(typeof(WantedEntityType), args[1].ToUpper());
             List<BaseEntity>[] items;
-            items = FindItems(player, pluginConfig.Commands.Radius, wantedType);
+            items = FindWhat(player, pluginConfig.Commands.Radius, wantedType);
 
 
             // Check whether to add or to remove
@@ -256,51 +326,58 @@ namespace Oxide.Plugins
             }
 
             // Respond to player what has been done
-            SendReply(player, buildAnswer(counter, items[0].Count, items[1].Count, items[2].Count, command, wantedType));
+            SendReply(player, buildAnswer(player, counter, items[0].Count, items[1].Count, items[2].Count, command, wantedType));
         }
 
         [HookMethod("SendHelpText")]
         private void ShowCommandHelp(BasePlayer player)
         {
+            if (pluginConfig.General.UsePermission && !permission.UserHasPermission(player.UserIDString, "share.allowed"))
+                return;
+
             var sb = new StringBuilder();
-            sb.AppendLine("<size=16>Share</size> by DyingRust.de");
-            sb.AppendLine("<size=12>Shares items with other players in a " + pluginConfig.Commands.Radius + "m radius around you.</size>");
-            sb.AppendLine("<size=1> </size>");
-
-            sb.AppendLine("<color=#FFD479>/" + pluginConfig.Commands.ShareCommand + "  <who>  <what></color>");
-            sb.AppendLine("<size=12>Shares the item <what> with every player <who></size>");
-            sb.AppendLine("<color=#FFD479>/" + pluginConfig.Commands.UnshareCommand + "  <who>  <what></color>");
-            sb.AppendLine("<size=12>Unshares the item <what> with every player <who></size>");
-            sb.AppendLine("<size=1> </size>");
-
-            sb.AppendLine("<color=#FFD479><who></color><size=12> can be <color=orange>clan</color>, <color=orange>friends</color> or a player name</size>");
-            sb.AppendLine("<color=#FFD479><what></color><size=12> can be <color=orange>at</color>(AutoTurrets), <color=orange>cl</color>(Codelocks), <color=orange>cb</color>(Cupboards) or <color=orange>all</color></size>");
-            sb.AppendLine("<size=12>Example: <color=#FFD479>/" + pluginConfig.Commands.ShareCommand + " \"Ser Winter\" all</color></size>");
+            sb.AppendLine("<size=20>Share</size> by DyingRust.de");
+            sb.AppendLine("<size=12>" + string.Format(lang.GetMessage(PluginDescription, this, player.UserIDString), pluginConfig.Commands.Radius) + "</size>");
+            sb.AppendLine("");
+            sb.AppendLine("Syntax Share:      " + string.Format(lang.GetMessage(PluginSyntaxShare, this, player.UserIDString), pluginConfig.Commands.ShareCommand, WhatList));
+            sb.AppendLine("Syntax Unshare:  " + string.Format(lang.GetMessage(PluginSyntaxUnshare, this, player.UserIDString), pluginConfig.Commands.UnshareCommand, WhatList));
+            sb.AppendLine("<size=12>" + Notes + "</size>");
+            sb.AppendLine("");
+            sb.AppendLine("<size=12>" + string.Format(lang.GetMessage(PluginExample, this, player.UserIDString), pluginConfig.Commands.ShareCommand) + "</size>");
 
             SendReply(player, sb.ToString());
         }
         #endregion
 
         #region Functions
-        private string buildAnswer(int createdWLEntries, int foundAT, int foundCL, int foundCB, string command, WantedEntityType type)
+
+        #region Helper
+        private bool IsBitSet(WantedEntityType value, WantedEntityType pos)
+        {
+            return (value & pos) != 0;
+        }
+
+        private string buildAnswer(BasePlayer player, int createdWLEntries, int foundAT, int foundCL, int foundCB, string command, WantedEntityType type)
         {
             var sb = new StringBuilder();
-            if (IsBitSet(type, WantedEntityType.AT))
-                sb.AppendLine("Found   " + foundAT + " AutoTurrets!");
-            if (IsBitSet(type, WantedEntityType.CL))
-                sb.AppendLine("Found   " + foundCL + " CodeLocks!");
-            if (IsBitSet(type, WantedEntityType.CB))
-                sb.AppendLine("Found   " + foundCB + " Cupboards!");
+            if (pluginConfig.Commands.AllowAutoturretSharing && IsBitSet(type, WantedEntityType.AT))
+                sb.AppendLine(string.Format(lang.GetMessage(FoundXY, this, player.UserIDString), foundAT, "AutoTurrets"));
+            if (pluginConfig.Commands.AllowCodelockSharing && IsBitSet(type, WantedEntityType.CL))
+                sb.AppendLine(string.Format(lang.GetMessage(FoundXY, this, player.UserIDString), foundCL, "CodeLocks"));
+            if (pluginConfig.Commands.AllowCupboardSharing && IsBitSet(type, WantedEntityType.CB))
+                sb.AppendLine(string.Format(lang.GetMessage(FoundXY, this, player.UserIDString), foundCB, "Cupboards"));
             if (string.Equals(command, pluginConfig.Commands.ShareCommand))
-                sb.AppendLine("Created " + createdWLEntries + " Whitelist Entries!");
+                sb.AppendLine(string.Format(lang.GetMessage(CreatedWL, this, player.UserIDString), createdWLEntries));
             else if (string.Equals(command, pluginConfig.Commands.UnshareCommand))
-                sb.AppendLine("Deleted " + createdWLEntries + " Whitelist Entries!");
+                sb.AppendLine(string.Format(lang.GetMessage(DeletedWL, this, player.UserIDString), createdWLEntries));
 
             return sb.ToString();
         }
+        #endregion
 
+        #region FindWhat
         // Finds all entities a player owns on a certain radius & returns them
-        private List<BaseEntity>[] FindItems(BasePlayer player, float radius, WantedEntityType entityMask)
+        private List<BaseEntity>[] FindWhat(BasePlayer player, float radius, WantedEntityType entityMask)
         {
             Dictionary<int, int> checkedInstanceIDs = new Dictionary<int, int>();
             List<BaseEntity>[] foundItems = new List<BaseEntity>[3];
@@ -316,11 +393,11 @@ namespace Oxide.Plugins
                     checkedInstanceIDs.Add(entity.GetInstanceID(), 1);
                     if (entity.OwnerID == player.userID)
                     {
-                        if (IsBitSet(entityMask, WantedEntityType.AT) && entity is AutoTurret)
+                        if (pluginConfig.Commands.AllowAutoturretSharing && IsBitSet(entityMask, WantedEntityType.AT) && entity is AutoTurret)
                             foundItems[0].Add(entity);
-                        if (IsBitSet(entityMask, WantedEntityType.CL) && entity.HasSlot(BaseEntity.Slot.Lock) && entity.GetSlot(BaseEntity.Slot.Lock) && entity.GetSlot(BaseEntity.Slot.Lock).GetComponent<CodeLock>())
+                        if (pluginConfig.Commands.AllowCodelockSharing && IsBitSet(entityMask, WantedEntityType.CL) && entity.HasSlot(BaseEntity.Slot.Lock) && entity.GetSlot(BaseEntity.Slot.Lock) && entity.GetSlot(BaseEntity.Slot.Lock).GetComponent<CodeLock>())
                             foundItems[1].Add(entity);
-                        if (IsBitSet(entityMask, WantedEntityType.CB) && entity is BuildingPrivlidge)
+                        if (pluginConfig.Commands.AllowCupboardSharing && IsBitSet(entityMask, WantedEntityType.CB) && entity is BuildingPrivlidge)
                             foundItems[2].Add(entity);
                     }
                 }
@@ -328,13 +405,10 @@ namespace Oxide.Plugins
             }
             return foundItems;
         }
+        #endregion
 
-        bool IsBitSet(WantedEntityType value, WantedEntityType pos)
-        {
-            return (value & pos) != 0;
-        }
-
-        List<BasePlayer> FindFriends(BasePlayer player)
+        #region FindWho
+        private List<BasePlayer> FindFriends(BasePlayer player)
         {
             if (Friends == null)
                 return null;
@@ -349,8 +423,7 @@ namespace Oxide.Plugins
 
             return friends;
         }
-
-        List<BasePlayer> FindClanMember(BasePlayer player)
+        private List<BasePlayer> FindClanMember(BasePlayer player)
         {
             if (Clans == null)
                 return null;
@@ -382,8 +455,7 @@ namespace Oxide.Plugins
 
             return clanMember;
         }
-
-        BasePlayer FindPlayer(string playerName)
+        private BasePlayer FindPlayer(string playerName)
         {
             BasePlayer foundPlayer = BasePlayer.Find(playerName);
             if (foundPlayer)
@@ -399,7 +471,7 @@ namespace Oxide.Plugins
 
             return foundPlayer;
         }
-        BasePlayer FindPlayer(ulong playerID)
+        private BasePlayer FindPlayer(ulong playerID)
         {
             BasePlayer foundPlayer = BasePlayer.FindByID(playerID);
             if (foundPlayer)
@@ -415,7 +487,9 @@ namespace Oxide.Plugins
 
             return foundPlayer;
         }
+        #endregion
 
+        #region ManipulateWhitelists
         private bool AddToWhiteList(AutoTurret at, BasePlayer player)
         {
             if (at.IsAuthed(player))
@@ -510,8 +584,8 @@ namespace Oxide.Plugins
 
             return false;
         }
+        #endregion
 
-        public void Logging(string msg) { Debug.Log("[Share] " + msg); }
         #endregion
     }
 }
